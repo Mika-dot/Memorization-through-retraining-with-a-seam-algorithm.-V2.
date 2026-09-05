@@ -66,6 +66,16 @@ def main() -> None:
     bitstream_path = out / "03_compressed.mtr3"
     enc = encode(source, bitstream_path, preset=args.preset, steps=args.steps, device=args.device, quiet=True)
 
+    # A byte-grid makes the otherwise opaque .mtr3 stage visible in README.
+    bit_raw = np.frombuffer(bitstream_path.read_bytes(), dtype=np.uint8)
+    side = int(np.ceil(np.sqrt(max(1, bit_raw.size))))
+    byte_grid = np.zeros(side * side, dtype=np.uint8)
+    byte_grid[: bit_raw.size] = bit_raw
+    byte_grid = byte_grid.reshape(side, side)
+    bitstream_img = Image.fromarray(byte_grid, mode="L").resize((512, 512), Image.Resampling.NEAREST).convert("RGB")
+    bitstream_visual_path = out / "03_bitstream_visual.png"
+    bitstream_img.save(bitstream_visual_path)
+
     restored_path = out / "04_restored.png"
     dec = decode(bitstream_path, restored_path, device=args.device)
     restored = Image.open(restored_path).convert("RGB")
@@ -101,7 +111,7 @@ def main() -> None:
         f"PSNR {enc['psnr_db']:.2f} dB | {human_size(source_bytes)} -> {human_size(bitstream_bytes)}"
     )
     make_pipeline(
-        [("1. Original", original), ("2. Importance", importance_img), ("3. Restored", restored), ("4. Error x4", diff_img)],
+        [("1. Original", original), ("2. Importance", importance_img), ("3. .mtr3 bytes", bitstream_img), ("4. Restored", restored), ("5. Error x4", diff_img)],
         footer,
         out / "00_pipeline.png",
     )
