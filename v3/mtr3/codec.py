@@ -4,6 +4,7 @@ import math
 import time
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Callable
 
 import numpy as np
 from PIL import Image
@@ -13,6 +14,13 @@ import torch.nn.functional as F
 from .bitstream import load_bitstream, save_bitstream
 from .model import MTR3Field, ModelConfig, make_xy, parameter_count
 from .seam import seam_importance
+
+ProgressCallback = Callable[[int, int, float], None]
+CancelCheck = Callable[[], bool]
+
+
+class EncodeCancelled(RuntimeError):
+    """Raised when an encode/decode operation is cancelled by a caller."""
 
 
 @dataclass(frozen=True)
@@ -53,11 +61,15 @@ def encode(
     steps: int | None = None,
     seed: int = 7,
     quiet: bool = False,
+    progress_callback: ProgressCallback | None = None,
+    cancel_check: CancelCheck | None = None,
 ) -> dict[str, float | int | str]:
     if preset not in PRESETS:
         raise ValueError(f"Unknown preset {preset!r}. Choose from: {', '.join(PRESETS)}")
     p = PRESETS[preset]
     total_steps = int(steps or p.steps)
+    if total_steps <= 0:
+        raise ValueError("steps must be > 0")
     dev = _device(device)
     torch.manual_seed(seed)
     np.random.seed(seed)
@@ -79,9 +91,15 @@ def encode(
     scaler = torch.amp.GradScaler("cuda", enabled=use_amp)
     best = float("inf")
     stale = 0
+    current = float("inf")
+    completed_steps = 0
     t0 = time.perf_counter()
+    callback_every = max(1, total_steps // 200)
 
     for step in range(total_steps):
+        if cancel_check is not None and cancel_check():
+            raise EncodeCancelled("Operation cancelled")
+
         frac = step / max(1, total_steps - 1)
         if frac < 0.25:
             enabled_levels = 1
@@ -107,19 +125,30 @@ def encode(
         scaler.update()
 
         current = float(loss.detach().cpu())
+        completed_steps = step + 1
         if current + 1e-6 < best:
             best = current
             stale = 0
         else:
             stale += 1
+
+        if progress_callback is not None and (step == 0 or completed_steps % callback_every == 0):
+            progress_callback(completed_steps, total_steps, current)
+
         if stale >= p.patience and step > total_steps // 2:
-            total_steps = step + 1
             break
-        if not quiet and (step == 0 or (step + 1) % max(50, total_steps // 20) == 0):
-            print(f"step {step + 1:5d}/{total_steps}  loss={current:.6f}")
+        if not quiet and (step == 0 or completed_steps % max(50, total_steps // 20) == 0):
+            print(f"step {completed_steps:5d}/{total_steps}  loss={current:.6f}")
 
     train_seconds = time.perf_counter() - t0
-    size = save_bitstream(output_path, model, metadata={"source": Path(input_path).name, "preset": preset, "steps": total_steps})
+    if progress_callback is not None:
+        progress_callback(completed_steps, completed_steps, current)
+
+    size = save_bitstream(
+        output_path,
+        model,
+        metadata={"source": Path(input_path).name, "preset": preset, "steps": completed_steps},
+    )
 
     qmodel, _ = load_bitstream(output_path, dev)
     with torch.inference_mode():
@@ -134,25 +163,43 @@ def encode(
         "bpp": (size * 8.0) / (w * h),
         "psnr_db": psnr,
         "encode_seconds": train_seconds,
-        "steps": total_steps,
+        "steps": completed_steps,
         "device": str(dev),
     }
 
 
-def _render(model: MTR3Field, device: torch.device, chunk: int = 262144) -> torch.Tensor:
+def _render(
+    model: MTR3Field,
+    device: torch.device,
+    chunk: int = 262144,
+    progress_callback: Callable[[int, int], None] | None = None,
+    cancel_check: CancelCheck | None = None,
+) -> torch.Tensor:
     xy = make_xy(model.height, model.width, device)
     parts: list[torch.Tensor] = []
-    for i in range(0, xy.shape[0], chunk):
-        parts.append(model(xy[i:i + chunk]))
+    total = xy.shape[0]
+    for i in range(0, total, chunk):
+        if cancel_check is not None and cancel_check():
+            raise EncodeCancelled("Operation cancelled")
+        end = min(i + chunk, total)
+        parts.append(model(xy[i:end]))
+        if progress_callback is not None:
+            progress_callback(end, total)
     return torch.cat(parts, dim=0)
 
 
-def decode(input_path: str | Path, output_path: str | Path, device: str = "auto") -> dict[str, float | int | str]:
+def decode(
+    input_path: str | Path,
+    output_path: str | Path,
+    device: str = "auto",
+    progress_callback: Callable[[int, int], None] | None = None,
+    cancel_check: CancelCheck | None = None,
+) -> dict[str, float | int | str]:
     dev = _device(device)
     model, _ = load_bitstream(input_path, dev)
     t0 = time.perf_counter()
     with torch.inference_mode():
-        pred = _render(model, dev)
+        pred = _render(model, dev, progress_callback=progress_callback, cancel_check=cancel_check)
     elapsed = time.perf_counter() - t0
     arr = (pred.reshape(model.height, model.width, 3).clamp(0, 1) * 255.0).round().byte().cpu().numpy()
     Image.fromarray(arr, mode="RGB").save(output_path)
