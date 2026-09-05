@@ -1,0 +1,140 @@
+name: GUI release
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  benchmark:
+    if: contains(github.event.head_commit.message, '[release-gui]')
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: v3/pyproject.toml
+      - name: Install codec
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e ./v3 --no-deps
+          python -m pip install Pillow numpy
+      - name: Generate benchmark image 1 round-trip
+        run: |
+          python tools/generate_readme_example.py \
+            --source "NeuralNetworksV2/img/1.png" \
+            --out-dir docs/benchmark_01 \
+            --preset fast \
+            --steps 200 \
+            --device cpu
+      - uses: actions/upload-artifact@v4
+        with:
+          name: benchmark-01
+          path: docs/benchmark_01
+          if-no-files-found: error
+
+  windows-gui:
+    if: contains(github.event.head_commit.message, '[release-gui]')
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: |
+            v3/pyproject.toml
+            v3_gui/requirements.txt
+      - name: Install CPU runtime and build tools
+        shell: pwsh
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+          python -m pip install -e .\v3 --no-deps
+          python -m pip install Pillow numpy PySide6 pyinstaller pytest
+      - name: Test codec and GUI source
+        shell: pwsh
+        run: |
+          $env:PYTHONPATH = "v3"
+          python -m pytest v3\tests -q
+          python -m py_compile v3_gui\app.py v3_gui\main_window.py v3_gui\workers.py v3_gui\image_view.py
+      - name: Build portable GUI
+        shell: pwsh
+        run: |
+          pyinstaller --noconfirm --clean v3_gui\MTRSA_GUI.spec
+          if (!(Test-Path "dist\MTRSA-GUI\MTRSA-GUI.exe")) { throw "MTRSA-GUI.exe was not produced" }
+          Compress-Archive -Path dist\MTRSA-GUI\* -DestinationPath MTRSA-GUI-Windows-x64.zip -Force
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-gui
+          path: MTRSA-GUI-Windows-x64.zip
+          if-no-files-found: error
+
+  publish:
+    if: contains(github.event.head_commit.message, '[release-gui]')
+    needs: [benchmark, windows-gui]
+    runs-on: ubuntu-latest
+    env:
+      TAG: v3.1.0-gui
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+      - uses: actions/download-artifact@v4
+        with:
+          name: benchmark-01
+          path: docs/benchmark_01
+      - uses: actions/download-artifact@v4
+        with:
+          name: windows-gui
+          path: release-assets
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Update README with measured benchmark values
+        run: python tools/update_readme_benchmark.py --readme README.md --results docs/benchmark_01/results.json
+      - name: Commit benchmark images and measured README section
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add README.md docs/benchmark_01
+          git commit -m "docs: publish benchmark image 1 round-trip [skip release]" || true
+          git push origin main
+      - name: Assemble release assets
+        run: |
+          cp docs/benchmark_01/03_compressed.mtr3 release-assets/benchmark_01.mtr3
+          cp docs/benchmark_01/results.json release-assets/benchmark_01-results.json
+          cat > release-notes.md <<'EOF'
+          # MTRSA GUI 3.1
+
+          First desktop release of the MTRSA V3 research codec.
+
+          - Windows x64 portable GUI (CPU runtime, no CUDA installation required)
+          - drag-and-drop image loading
+          - image -> `.mtr3` compression
+          - `.mtr3` -> PNG restoration
+          - seam/detail importance visualization
+          - `fast`, `balanced`, `max` presets
+          - live encode/decode progress and cancellation
+          - file size, bpp, PSNR, encode/decode timing
+          - benchmark image 1 `.mtr3` and JSON results included as release assets
+
+          For CUDA acceleration, run the source version with a CUDA-enabled PyTorch installation.
+          EOF
+      - name: Publish or refresh GitHub Release
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release upload "$TAG" release-assets/* --clobber
+          else
+            gh release create "$TAG" release-assets/* \
+              --target main \
+              --title "MTRSA GUI 3.1 - Windows x64" \
+              --notes-file release-notes.md
+          fi
