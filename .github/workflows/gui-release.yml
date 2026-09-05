@@ -17,6 +17,7 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: v3/pyproject.toml
       - name: Install codec
         run: |
           python -m pip install --upgrade pip
@@ -46,6 +47,9 @@ jobs:
         with:
           python-version: '3.12'
           cache: pip
+          cache-dependency-path: |
+            v3/pyproject.toml
+            v3_gui/requirements.txt
       - name: Install CPU runtime and build tools
         shell: pwsh
         run: |
@@ -53,15 +57,17 @@ jobs:
           python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
           python -m pip install -e .\v3 --no-deps
           python -m pip install Pillow numpy PySide6 pyinstaller pytest
-      - name: Smoke test codec
+      - name: Test codec and GUI source
         shell: pwsh
         run: |
           $env:PYTHONPATH = "v3"
-          python -m pytest v3\tests\test_smoke.py -q
+          python -m pytest v3\tests -q
+          python -m py_compile v3_gui\app.py v3_gui\main_window.py v3_gui\workers.py v3_gui\image_view.py
       - name: Build portable GUI
         shell: pwsh
         run: |
           pyinstaller --noconfirm --clean v3_gui\MTRSA_GUI.spec
+          if (!(Test-Path "dist\MTRSA-GUI\MTRSA-GUI.exe")) { throw "MTRSA-GUI.exe was not produced" }
           Compress-Archive -Path dist\MTRSA-GUI\* -DestinationPath MTRSA-GUI-Windows-x64.zip -Force
       - uses: actions/upload-artifact@v4
         with:
