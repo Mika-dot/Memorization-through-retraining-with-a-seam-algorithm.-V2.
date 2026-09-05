@@ -1,11 +1,20 @@
 # -*- mode: python ; coding: utf-8 -*-
+import os
+
 from PyInstaller.utils.hooks import collect_submodules
+
+# PyInstaller resolves script paths relative to the .spec directory, while CI
+# invokes this spec from the repository root. Build absolute paths explicitly
+# so the package works from either location.
+ROOT = os.path.abspath(os.path.join(SPECPATH, os.pardir))
+SCRIPT = os.path.join(SPECPATH, 'app.py')
+V3_ROOT = os.path.join(ROOT, 'v3')
 
 hiddenimports = collect_submodules('mtr3')
 
 a = Analysis(
-    ['v3_gui/app.py'],
-    pathex=['.', 'v3'],
+    [SCRIPT],
+    pathex=[ROOT, V3_ROOT],
     binaries=[],
     datas=[],
     hiddenimports=hiddenimports,
