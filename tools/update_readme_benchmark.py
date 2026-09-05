@@ -75,7 +75,7 @@ The stages are:
 
 1. **Original** - input pixels from benchmark image 1.
 2. **Importance map** - seam/detail energy used to spend more optimization budget on edges and texture without changing image geometry.
-3. **`.mtr3` bitstream** - quantized per-image neural representation.
+3. **`.mtr3` bitstream** - quantized per-image neural representation. The screenshot is a direct byte-grid visualization of the compressed file, not an image approximation.
 4. **Restored image** - decoded by evaluating the compact neural field; no retraining is performed during decode.
 5. **Difference x4** - absolute RGB error amplified four times so reconstruction failures are visible.
 
@@ -99,7 +99,7 @@ The stages are:
 
 ![MTRSA benchmark crop comparison](docs/benchmark_01/06_crop_comparison.png)
 
-Individual generated files: [original](docs/benchmark_01/01_original.png) · [importance](docs/benchmark_01/02_importance.png) · [compressed `.mtr3`](docs/benchmark_01/03_compressed.mtr3) · [restored](docs/benchmark_01/04_restored.png) · [difference x4](docs/benchmark_01/05_difference_x4.png) · [machine-readable results](docs/benchmark_01/results.json).
+Individual generated files: [original](docs/benchmark_01/01_original.png) · [importance](docs/benchmark_01/02_importance.png) · [compressed `.mtr3`](docs/benchmark_01/03_compressed.mtr3) · [bitstream visualization](docs/benchmark_01/03_bitstream_visual.png) · [restored](docs/benchmark_01/04_restored.png) · [difference x4](docs/benchmark_01/05_difference_x4.png) · [machine-readable results](docs/benchmark_01/results.json).
 {END}"""
     text = replace_or_insert(text, START, END, block, "## Why the original idea is more relevant now than in 2022")
     readme_path.write_text(text, encoding="utf-8")
