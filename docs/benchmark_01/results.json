@@ -1,0 +1,17 @@
+{
+  "source": "NeuralNetworksV2/img/1.png",
+  "width": 1200,
+  "height": 813,
+  "preset": "fast",
+  "steps": 200,
+  "source_bytes": 287883,
+  "raw_rgb_bytes": 2926800,
+  "bitstream_bytes": 23951,
+  "ratio_vs_source_file": 12.019665149680598,
+  "ratio_vs_raw_rgb": 122.19949062669617,
+  "bpp": 0.19640016400164,
+  "psnr_db": 20.607964342098608,
+  "encode_seconds": 6.342572585999989,
+  "decode_seconds": 0.23882094100000018,
+  "device": "cpu"
+}
